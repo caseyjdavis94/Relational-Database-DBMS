@@ -1,0 +1,231 @@
+import sqlite3
+from datetime import datetime
+import re
+
+# Connect to SQLite Database (or create one if it doesn't exist)
+def connect_db():
+    return sqlite3.connect('my_database.db')
+
+# Create tables: Users, Products, and AuditLog
+def create_tables():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    # Create Users Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS Users (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        Name TEXT NOT NULL,
+        Email TEXT UNIQUE NOT NULL,
+        DateJoined TEXT NOT NULL,
+        Role TEXT DEFAULT 'User'
+    )
+    ''')
+
+    # Create Products Table (linked to Users)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS Products (
+        ProductID INTEGER PRIMARY KEY AUTOINCREMENT,
+        Name TEXT NOT NULL,
+        Price REAL NOT NULL,
+        UserID INTEGER,
+        FOREIGN KEY(UserID) REFERENCES Users(ID)
+    )
+    ''')
+
+    # Create AuditLog Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS AuditLog (
+        ActionID INTEGER PRIMARY KEY AUTOINCREMENT,
+        Action TEXT,
+        UserID INTEGER,
+        Timestamp TEXT
+    )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+# Insert data into Users table
+def insert_user(name, email, role='User'):
+    if not is_valid_email(email):
+        print("Invalid email format. Please enter a valid email.")
+        return
+    
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    date_joined = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Get current timestamp
+    
+    cursor.execute('''
+    INSERT INTO Users (Name, Email, DateJoined, Role) 
+    VALUES (?, ?, ?, ?)
+    ''', (name, email, date_joined, role))
+    
+    user_id = cursor.lastrowid  # Get the ID of the inserted user
+    log_action("Added User", user_id)
+
+    conn.commit()
+    conn.close()
+    print(f"User {name} inserted successfully.")
+
+# Validate email format using regex
+def is_valid_email(email):
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(email_regex, email) is not None
+
+# Log actions (for AuditLog)
+def log_action(action, user_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute('''
+    INSERT INTO AuditLog (Action, UserID, Timestamp)
+    VALUES (?, ?, ?)
+    ''', (action, user_id, timestamp))
+    conn.commit()
+    conn.close()
+
+# View all users with pagination
+def view_users_paginated(page, per_page=10):
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    offset = (page - 1) * per_page
+    cursor.execute('SELECT * FROM Users LIMIT ? OFFSET ?', (per_page, offset))
+    rows = cursor.fetchall()
+    
+    if rows:
+        print(f"{'ID':<5} {'Name':<20} {'Email':<30} {'Date Joined'}")
+        print("-" * 80)
+        for row in rows:
+            print(f"{row[0]:<5} {row[1]:<20} {row[2]:<30} {row[3]}")
+    else:
+        print("No more users.")
+    
+    conn.close()
+
+# Search users by name
+def search_user_by_name(name):
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT * FROM Users WHERE Name LIKE ?', ('%' + name + '%',))
+    rows = cursor.fetchall()
+    
+    if rows:
+        print(f"{'ID':<5} {'Name':<20} {'Email':<30} {'Date Joined'}")
+        print("-" * 80)
+        for row in rows:
+            print(f"{row[0]:<5} {row[1]:<20} {row[2]:<30} {row[3]}")
+    else:
+        print(f"No users found with the name: {name}")
+    
+    conn.close()
+
+# Update user data
+def update_user(user_id, new_name, new_email):
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    UPDATE Users
+    SET Name = ?, Email = ?
+    WHERE ID = ?
+    ''', (new_name, new_email, user_id))
+    
+    conn.commit()
+    conn.close()
+    print(f"User {user_id} updated successfully.")
+
+# Delete user
+def delete_user(user_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    DELETE FROM Users WHERE ID = ?
+    ''', (user_id,))
+    
+    conn.commit()
+    conn.close()
+    print(f"User {user_id} deleted successfully.")
+
+# Backup the database to a file
+def backup_database():
+    conn = connect_db()
+    with open('backup.db', 'wb') as f:
+        for line in conn.iterdump():
+            f.write(f'{line}\n'.encode())
+    conn.close()
+    print("Backup complete.")
+
+# Transfer funds between users (transaction management)
+def transfer_funds(from_user, to_user, amount):
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    try:
+        # Start a transaction
+        conn.execute('BEGIN')
+        
+        # Transfer the funds (example: updating balances)
+        cursor.execute('UPDATE Users SET Balance = Balance - ? WHERE ID = ?', (amount, from_user))
+        cursor.execute('UPDATE Users SET Balance = Balance + ? WHERE ID = ?', (amount, to_user))
+        
+        # Commit the transaction
+        conn.commit()
+        log_action("Funds Transferred", from_user)
+    except Exception as e:
+        # Rollback if there's an error
+        conn.rollback()
+        print(f"Transaction failed: {e}")
+    finally:
+        conn.close()
+
+# Main function to control the flow
+def main():
+    create_tables()  # Ensure tables exist
+    
+    while True:
+        print("\nChoose an option:")
+        print("1. View Users")
+        print("2. Add User")
+        print("3. Update User")
+        print("4. Delete User")
+        print("5. Search User by Name")
+        print("6. Backup Database")
+        print("7. Exit")
+        
+        choice = input("Enter choice (1-7): ")
+        
+        if choice == '1':
+            page = int(input("Enter page number: "))
+            view_users_paginated(page)
+        elif choice == '2':
+            name = input("Enter Name: ")
+            email = input("Enter Email: ")
+            role = input("Enter Role (Admin/User): ")
+            insert_user(name, email, role)
+        elif choice == '3':
+            user_id = int(input("Enter User ID to update: "))
+            new_name = input("Enter new Name: ")
+            new_email = input("Enter new Email: ")
+            update_user(user_id, new_name, new_email)
+        elif choice == '4':
+            user_id = int(input("Enter User ID to delete: "))
+            delete_user(user_id)
+        elif choice == '5':
+            name = input("Enter Name to search: ")
+            search_user_by_name(name)
+        elif choice == '6':
+            backup_database()
+        elif choice == '7':
+            print("Exiting...")
+            break
+        else:
+            print("Invalid choice. Please try again.")
+
+# Run the program
+if __name__ == "__main__":
+    main()
